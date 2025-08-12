@@ -1,0 +1,10 @@
+{
+  "name": "davefuck",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node runners/web/vm.js --serve",
+    "test": "node --test runners/web",
+    "size": "node -e \"const fs=require('fs'); const zlib=require('zlib'); const files=['runners/web/index.html','runners/web/runtime.js','runners/web/vm.js','rom/dave.bf','game/generated/level.js']; let raw=0,gzip=0; for (const file of files) { const data=fs.readFileSync(file); const gz=zlib.gzipSync(data).length; raw+=data.length; gzip+=gz; console.log(`${file}: ${data.length} raw bytes, ${gz} gzip bytes`); } console.log(`total: ${raw} raw bytes, ${gzip} gzip bytes`);\""
+  }
+}
