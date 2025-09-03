@@ -11,6 +11,7 @@ function createHostVM() {
   const vm = new BrainfuckVM(ROM, { tapeSize: 512 });
   vm.tape[MEM.PLAYER_X] = level.playerStart.x;
   vm.tape[MEM.PLAYER_Y] = level.playerStart.y;
+  vm.tape[MEM.PLAYER_FACING] = 1;
   vm.tape[MEM.ENEMY_X] = level.enemy.x;
   vm.tape[MEM.ENEMY_Y] = level.enemy.y;
   vm.tape[MEM.ENEMY_DIR] = 1;
@@ -51,6 +52,16 @@ test("browser host observes BF-owned horizontal movement", () => {
 
   assert.equal(vm.tape[MEM.PLAYER_X], level.playerStart.x);
   assert.equal(vm.tape[MEM.PLAYER_SUB_X], 1);
+});
+
+test("browser host observes BF-owned facing state", () => {
+  const vm = createHostVM();
+
+  tick(vm, { left: 1 });
+  assert.equal(vm.tape[MEM.PLAYER_FACING], 0);
+
+  tick(vm, { right: 1 });
+  assert.equal(vm.tape[MEM.PLAYER_FACING], 1);
 });
 
 test("browser host observes BF-owned jump state", () => {
@@ -99,6 +110,23 @@ test("browser host observes BF-owned key and door state", () => {
   assert.equal(vm.tape[MEM.DOOR_OPEN], 1);
 });
 
+test("browser host observes BF-owned coins and score", () => {
+  const vm = createHostVM();
+  const coin = level.coins[0];
+  vm.tape[MEM.PLAYER_X] = coin.x;
+  vm.tape[MEM.PLAYER_Y] = coin.y;
+
+  tick(vm);
+
+  assert.equal(vm.tape[MEM.COIN_BASE], 1);
+  assert.equal(vm.tape[MEM.SCORE], 10);
+
+  tick(vm);
+
+  assert.equal(vm.tape[MEM.COIN_BASE], 1);
+  assert.equal(vm.tape[MEM.SCORE], 10);
+});
+
 test("browser host observes closed door collision and open door entry", () => {
   const closed = createHostVM();
   closed.tape[MEM.PLAYER_X] = level.door.x - 1;
@@ -137,4 +165,5 @@ test("browser host observes BF-owned enemy, death, win, and restart", () => {
   assert.equal(win.tape[MEM.PLAYER_Y], level.playerStart.y);
   assert.equal(win.tape[MEM.GAME_WIN], 0);
   assert.equal(win.tape[MEM.DOOR_OPEN], 0);
+  assert.equal(win.tape[MEM.SCORE], 0);
 });

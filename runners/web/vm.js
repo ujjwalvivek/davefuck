@@ -24,6 +24,9 @@ export const MEM = Object.freeze({
   GAME_DEAD: 119,
   GAME_WIN: 120,
   GAME_STARTED: 121,
+  PLAYER_FACING: 122,
+  SCORE: 123,
+  COIN_BASE: 128,
 });
 
 const OPS = new Set([">", "<", "+", "-", ".", ",", "[", "]"]);

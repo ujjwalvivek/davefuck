@@ -15,6 +15,7 @@
 
       body {
         margin: 0;
+        width: 100vw;
         min-height: 100vh;
         display: grid;
         place-items: center;
@@ -26,11 +27,16 @@
         height: 100vh;
         display: grid;
         place-items: center;
+        background: #111;
       }
 
       canvas {
         image-rendering: pixelated;
         background: #171717;
+        aspect-ratio: 16 / 9;
+        width: min(100vw, calc(100vh * 16 / 9));
+        height: min(100vh, calc(100vw * 9 / 16));
+        display: block;
       }
 
       .status {
@@ -44,7 +50,7 @@
   </head>
   <body>
     <main>
-      <canvas id="screen" width="512" height="176" aria-label="Brainfuck Dave playfield"></canvas>
+      <canvas id="screen" width="640" height="360" aria-label="Brainfuck Dave playfield"></canvas>
       <div id="status" class="status">Loading ROM...</div>
     </main>
     <script type="module" src="./runtime.js"></script>
