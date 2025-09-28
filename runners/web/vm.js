@@ -26,6 +26,9 @@ export const MEM = Object.freeze({
   GAME_STARTED: 121,
   PLAYER_FACING: 122,
   SCORE: 123,
+  AUDIO_EVENT: 124,
+  AUDIO_SEQ: 125,
+  CURRENT_LEVEL: 126,
   COIN_BASE: 128,
 });
 

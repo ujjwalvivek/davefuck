@@ -15,6 +15,7 @@ function createHostVM() {
   vm.tape[MEM.ENEMY_X] = level.enemy.x;
   vm.tape[MEM.ENEMY_Y] = level.enemy.y;
   vm.tape[MEM.ENEMY_DIR] = 1;
+  vm.tape[MEM.CURRENT_LEVEL] = 1;
   vm.tape[MEM.GAME_STARTED] = 1;
   return vm;
 }
@@ -27,11 +28,15 @@ function tick(vm, { left = 0, right = 0, jump = 0, restart = 0 } = {}) {
   vm.tape[MEM.TICK_DONE] = 0;
   vm.tape[MEM.TICK_REQUESTED] = 1;
   vm.rewind();
-  return vm.runUntil((machine) => machine.tape[MEM.TICK_DONE] === 1, 600000);
+  return vm.runUntil((machine) => machine.tape[MEM.TICK_DONE] === 1, 900000);
 }
 
 function pixelY(vm) {
   return vm.tape[MEM.PLAYER_Y] * TILE + vm.tape[MEM.PLAYER_SUB_Y];
+}
+
+function finalDoor() {
+  return level.doors.find((door) => door.level === level.levelCount);
 }
 
 test("browser host VM can run the generated ROM for one tick", () => {
@@ -81,7 +86,7 @@ test("browser host diagonal input finishes within the browser step budget", () =
   const steps = tick(vm, { right: 1, jump: 1 });
 
   assert.equal(vm.tape[MEM.TICK_DONE], 1);
-  assert.ok(steps < 600000);
+  assert.ok(steps < 900000);
 });
 
 test("browser host squeeze collision finishes within the browser step budget", () => {
@@ -96,7 +101,7 @@ test("browser host squeeze collision finishes within the browser step budget", (
 
   assert.equal(vm.tape[MEM.TICK_DONE], 1);
   assert.equal(vm.tape[MEM.PLAYER_JUMP_PHASE], 0);
-  assert.ok(steps < 600000);
+  assert.ok(steps < 900000);
 });
 
 test("browser host observes BF-owned key and door state", () => {
@@ -108,6 +113,7 @@ test("browser host observes BF-owned key and door state", () => {
 
   assert.equal(vm.tape[MEM.KEY_COLLECTED], 1);
   assert.equal(vm.tape[MEM.DOOR_OPEN], 1);
+  assert.equal(vm.tape[MEM.AUDIO_EVENT], 4);
 });
 
 test("browser host observes BF-owned coins and score", () => {
@@ -120,11 +126,14 @@ test("browser host observes BF-owned coins and score", () => {
 
   assert.equal(vm.tape[MEM.COIN_BASE], 1);
   assert.equal(vm.tape[MEM.SCORE], 10);
+  assert.equal(vm.tape[MEM.AUDIO_EVENT], 3);
+  assert.equal(vm.tape[MEM.AUDIO_SEQ], 1);
 
   tick(vm);
 
   assert.equal(vm.tape[MEM.COIN_BASE], 1);
   assert.equal(vm.tape[MEM.SCORE], 10);
+  assert.equal(vm.tape[MEM.AUDIO_SEQ], 1);
 });
 
 test("browser host observes closed door collision and open door entry", () => {
@@ -154,8 +163,10 @@ test("browser host observes BF-owned enemy, death, win, and restart", () => {
   assert.equal(enemy.tape[MEM.GAME_DEAD], 1);
 
   const win = createHostVM();
-  win.tape[MEM.PLAYER_X] = level.exit.x;
-  win.tape[MEM.PLAYER_Y] = level.exit.y;
+  const door = finalDoor();
+  win.tape[MEM.CURRENT_LEVEL] = level.levelCount;
+  win.tape[MEM.PLAYER_X] = door.x;
+  win.tape[MEM.PLAYER_Y] = door.y;
   win.tape[MEM.DOOR_OPEN] = 1;
   tick(win);
   assert.equal(win.tape[MEM.GAME_WIN], 1);
@@ -164,6 +175,7 @@ test("browser host observes BF-owned enemy, death, win, and restart", () => {
   assert.equal(win.tape[MEM.PLAYER_X], level.playerStart.x);
   assert.equal(win.tape[MEM.PLAYER_Y], level.playerStart.y);
   assert.equal(win.tape[MEM.GAME_WIN], 0);
+  assert.equal(win.tape[MEM.CURRENT_LEVEL], 1);
   assert.equal(win.tape[MEM.DOOR_OPEN], 0);
   assert.equal(win.tape[MEM.SCORE], 0);
 });

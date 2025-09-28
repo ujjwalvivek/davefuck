@@ -38,20 +38,11 @@
         height: min(100vh, calc(100vw * 9 / 16));
         display: block;
       }
-
-      .status {
-        position: fixed;
-        left: 12px;
-        bottom: 10px;
-        color: #aaa;
-        font-size: 14px;
-      }
     </style>
   </head>
   <body>
     <main>
       <canvas id="screen" width="640" height="360" aria-label="Brainfuck Dave playfield"></canvas>
-      <div id="status" class="status">Loading ROM...</div>
     </main>
     <script type="module" src="./runtime.js"></script>
   </body>
