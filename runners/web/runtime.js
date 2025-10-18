@@ -16,6 +16,8 @@ const VIEW_Y = Math.floor((STAGE_HEIGHT - SCREEN_HEIGHT) / 2);
 const STEP_MS = 1000 / 60;
 const MAX_FRAME_MS = 100;
 const AUDIO_VOLUME = 2.7;
+const JETPACK_MAX_FUEL = 150;
+const JETPACK_BASE = MEM.COIN_BASE + (level.coins?.length ?? 0);
 
 const canvas = document.querySelector("#screen");
 const status = document.querySelector("#status");
@@ -25,7 +27,15 @@ ctx.imageSmoothingEnabled = false;
 const keys = new Set();
 const solidTiles = new Set(level.solids.map((solid) => tileKey(solid.x, solid.y)));
 const platformTiles = new Set((level.platforms ?? []).map((solid) => tileKey(solid.x, solid.y)));
+const solidMaterialTiles = new Map(
+  (level.solidMaterials ?? []).map((solid) => [tileKey(solid.x, solid.y), solid.kind]),
+);
 const visualEnemy = { initialized: false, x: 0, y: 0 };
+const visualFlyingEnemy = { initialized: false, x: 0, y: 0 };
+const visualFlyingEnemy2 = { initialized: false, x: 0, y: 0 };
+let enemyDeathTime = null;
+let flyingEnemyDeathTime = null;
+let flyingEnemyDeathTime2 = null;
 let screenMode = "title";
 let startRequested = false;
 let presentedLevel = 1;
@@ -33,9 +43,12 @@ let transitionUntil = 0;
 let transitionFromLevel = 1;
 let jumpQueued = false;
 let jumpHeld = false;
+let shootQueued = false;
+let shootHeld = false;
 let horizontalIntent = null;
 let audioContext = null;
 let lastAudioSeq = 0;
+let jetpackToggleQueued = false;
 
 const FONT_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ:-/' ";
 const FONT_BITS =
@@ -223,8 +236,14 @@ function draw(tape) {
 
   for (const solid of level.solids) {
     if (isInCamera(solid.x, cameraX)) {
-      if (platformTiles.has(tileKey(solid.x, solid.y))) {
+      const key = tileKey(solid.x, solid.y);
+      const material = solidMaterialTiles.get(key);
+      if (platformTiles.has(key)) {
         drawPlatformTile(solid.x, solid.y, cameraX);
+      } else if (material === "@") {
+        drawMudTile(solid.x, solid.y, cameraX);
+      } else if (material === "U") {
+        drawBlueBlockTile(solid.x, solid.y, cameraX);
       } else {
         drawBrickTile(solid.x, solid.y, cameraX);
       }
@@ -267,7 +286,8 @@ function draw(tape) {
 
   const activeEnemy = entityForLevel(level.enemies, currentLevel);
   if (activeEnemy) {
-    const enemyX = tape[MEM.ENEMY_X] || activeEnemy.x;
+    const section = activeLevelSection(currentLevel);
+    const enemyX = section.startX + (tape[MEM.ENEMY_X] || activeEnemy.x - section.startX);
     const enemyY = tape[MEM.ENEMY_Y] || activeEnemy.y;
     const enemyDraw = smoothEnemy(
       activeEnemy,
@@ -276,11 +296,114 @@ function draw(tape) {
       tape[MEM.ENEMY_DIR],
       tape[MEM.ENEMY_TIMER],
     );
-    drawEnemy(VIEW_X + enemyDraw.x - cameraX, VIEW_Y + HUD_HEIGHT + enemyDraw.y);
+    if (tape[MEM.ENEMY_DEAD] !== 0) {
+      if (enemyDeathTime === null) {
+        enemyDeathTime = performance.now();
+      }
+      if (performance.now() - enemyDeathTime < 200) {
+        drawEnemyBurst(VIEW_X + enemyDraw.x - cameraX, VIEW_Y + HUD_HEIGHT + enemyDraw.y);
+      }
+    } else {
+      enemyDeathTime = null;
+      drawEnemy(VIEW_X + enemyDraw.x - cameraX, VIEW_Y + HUD_HEIGHT + enemyDraw.y);
+    }
   }
 
-  const drawX =
-    (tape[MEM.PLAYER_X] * LOGICAL_TILE + tape[MEM.PLAYER_SUB_X]) * RENDER_SCALE;
+  const levelFlyingEnemies = (level.flyingEnemies ?? []).filter((e) => e.level === currentLevel);
+  const section = activeLevelSection(currentLevel);
+
+  if (levelFlyingEnemies[0]) {
+    const enemy = levelFlyingEnemies[0];
+    const enemyX = section.startX + (tape[MEM.FLYING_ENEMY_X] || (enemy.x - section.startX));
+    const enemyY = tape[MEM.FLYING_ENEMY_Y] || (enemy.y - 1);
+    const enemyDraw = smoothFlyingEnemy(
+      enemy,
+      enemyX,
+      enemyY,
+      tape[MEM.FLYING_ENEMY_DIR],
+      tape[MEM.ENEMY_TIMER],
+      visualFlyingEnemy,
+    );
+    const isDead = tape[MEM.FLYING_ENEMY_DEAD] !== 0;
+    if (isDead) {
+      if (flyingEnemyDeathTime === null) {
+        flyingEnemyDeathTime = performance.now();
+      }
+      if (performance.now() - flyingEnemyDeathTime < 200) {
+        drawEnemyBurst(VIEW_X + enemyDraw.x - cameraX, VIEW_Y + HUD_HEIGHT + enemyDraw.y);
+      }
+    } else {
+      flyingEnemyDeathTime = null;
+      drawFlyingEnemy(VIEW_X + enemyDraw.x - cameraX, VIEW_Y + HUD_HEIGHT + enemyDraw.y);
+    }
+  }
+
+  if (levelFlyingEnemies[1]) {
+    const enemy = levelFlyingEnemies[1];
+    const enemyX = section.startX + (tape[MEM.FLYING_ENEMY2_X] || (enemy.x - section.startX));
+    const enemyY = tape[MEM.FLYING_ENEMY2_Y] || (enemy.y - 1);
+    const enemyDraw = smoothFlyingEnemy(
+      enemy,
+      enemyX,
+      enemyY,
+      tape[MEM.FLYING_ENEMY2_DIR],
+      tape[MEM.ENEMY_TIMER],
+      visualFlyingEnemy2,
+    );
+    const isDead = tape[MEM.FLYING_ENEMY2_DEAD] !== 0;
+    if (isDead) {
+      if (flyingEnemyDeathTime2 === null) {
+        flyingEnemyDeathTime2 = performance.now();
+      }
+      if (performance.now() - flyingEnemyDeathTime2 < 200) {
+        drawEnemyBurst(VIEW_X + enemyDraw.x - cameraX, VIEW_Y + HUD_HEIGHT + enemyDraw.y);
+      }
+    } else {
+      flyingEnemyDeathTime2 = null;
+      drawFlyingEnemy(VIEW_X + enemyDraw.x - cameraX, VIEW_Y + HUD_HEIGHT + enemyDraw.y);
+    }
+  }
+
+  for (const gun of level.guns ?? []) {
+    if (gun.level === currentLevel && tape[MEM.GUN_COLLECTED] === 0 && isInCamera(gun.x, cameraX)) {
+      drawGunPickup(VIEW_X + gun.x * TILE - cameraX, VIEW_Y + HUD_HEIGHT + gun.y * TILE);
+    }
+  }
+
+  (level.jetpacks ?? []).forEach((jetpack, index) => {
+    if (jetpack.level === currentLevel && tape[JETPACK_BASE + index] === 0 && isInCamera(jetpack.x, cameraX)) {
+      drawJetpackPickup(VIEW_X + jetpack.x * TILE - cameraX, VIEW_Y + HUD_HEIGHT + jetpack.y * TILE);
+    }
+  });
+
+  if (tape[MEM.PROJECTILE_ACTIVE] !== 0) {
+    const projectileX = worldTileX(currentLevel, tape[MEM.PROJECTILE_X]);
+    drawProjectile(
+      VIEW_X + projectileX * TILE - cameraX,
+      VIEW_Y + HUD_HEIGHT + tape[MEM.PROJECTILE_Y] * TILE,
+      tape[MEM.PROJECTILE_DIR] !== 0,
+    );
+  }
+
+  if (tape[MEM.ENEMY_PROJ1_ACTIVE] !== 0) {
+    const projX = worldTileX(currentLevel, tape[MEM.ENEMY_PROJ1_X]);
+    drawEnemyProjectile(
+      VIEW_X + projX * TILE - cameraX,
+      VIEW_Y + HUD_HEIGHT + tape[MEM.ENEMY_PROJ1_Y] * TILE,
+      tape[MEM.ENEMY_PROJ1_DIR] !== 0,
+    );
+  }
+
+  if (tape[MEM.ENEMY_PROJ2_ACTIVE] !== 0) {
+    const projX = worldTileX(currentLevel, tape[MEM.ENEMY_PROJ2_X]);
+    drawEnemyProjectile(
+      VIEW_X + projX * TILE - cameraX,
+      VIEW_Y + HUD_HEIGHT + tape[MEM.ENEMY_PROJ2_Y] * TILE,
+      tape[MEM.ENEMY_PROJ2_DIR] !== 0,
+    );
+  }
+
+  const drawX = worldPixelX(currentLevel, tape[MEM.PLAYER_X], tape[MEM.PLAYER_SUB_X]);
   const drawY =
     VIEW_Y +
     HUD_HEIGHT +
@@ -291,6 +414,9 @@ function draw(tape) {
     facingRight: tape[MEM.PLAYER_FACING] !== 0,
     jumpPhase: tape[MEM.PLAYER_JUMP_PHASE],
     walkFrame: Math.floor(tape[MEM.PLAYER_SUB_X] / 4) & 1,
+    hasGun: tape[MEM.GUN_COLLECTED] !== 0,
+    hasJetpack: tape[MEM.JETPACK_COLLECTED] !== 0,
+    isJetpackActive: tape[MEM.JETPACK_ACTIVE] !== 0,
   });
   ctx.restore();
 
@@ -306,8 +432,11 @@ function draw(tape) {
 
 function cameraForTape(tape) {
   const section = activeLevelSection(tape[MEM.CURRENT_LEVEL] || 1);
-  const playerX =
-    (tape[MEM.PLAYER_X] * LOGICAL_TILE + tape[MEM.PLAYER_SUB_X]) * RENDER_SCALE;
+  const playerX = worldPixelX(
+    tape[MEM.CURRENT_LEVEL] || 1,
+    tape[MEM.PLAYER_X],
+    tape[MEM.PLAYER_SUB_X],
+  );
   const sectionStart = section.startX * TILE;
   const sectionWidth = section.width * TILE;
   const minCameraX = sectionStart;
@@ -321,6 +450,20 @@ function activeLevelSection(currentLevel) {
   return (
     level.sections?.find((section) => section.kind === "level" && section.level === currentLevel) ??
     { startX: 0, width: Math.min(level.width, VISIBLE_TILES) }
+  );
+}
+
+function worldTileX(currentLevel, localTileX) {
+  return activeLevelSection(currentLevel).startX + localTileX;
+}
+
+function localTileX(currentLevel, worldTileXValue) {
+  return worldTileXValue - activeLevelSection(currentLevel).startX;
+}
+
+function worldPixelX(currentLevel, localTileXValue, subX = 0) {
+  return (
+    (worldTileX(currentLevel, localTileXValue) * LOGICAL_TILE + subX) * RENDER_SCALE
   );
 }
 
@@ -343,33 +486,71 @@ function drawHud(tape) {
   ctx.fillStyle = "#f4f4f4";
   ctx.fillRect(VIEW_X, VIEW_Y + HUD_HEIGHT - 3, SCREEN_WIDTH, 1);
 
-  const door = tape[MEM.DOOR_OPEN] !== 0 ? "OPEN" : "LOCK";
-  const key = tape[MEM.KEY_COLLECTED] !== 0 ? "YES" : "NO";
+  const door = tape[MEM.DOOR_OPEN] ? "OPEN" : "LOCK";
+  const key = tape[MEM.KEY_COLLECTED] ? "YES" : "NO";
+  const gun = tape[MEM.GUN_COLLECTED] ? "YES" : "NO";
   const currentLevel = tape[MEM.CURRENT_LEVEL] || 1;
   const restartPrompt = tape[MEM.GAME_WIN] !== 0 || tape[MEM.GAME_DEAD] !== 0;
 
-  drawPixelText("DAVE", VIEW_X + 8, VIEW_Y + 6, 2, "#45f35e", "#104018");
-  drawPixelText(`SCORE ${scoreText(tape[MEM.SCORE])}`, VIEW_X + 80, VIEW_Y + 6, 2, "#dfffe4", "#23552a");
-  drawPixelText(`LV ${String(currentLevel).padStart(2, "0")}`, VIEW_X + 238, VIEW_Y + 6, 2, "#45f35e", "#104018");
-  if (restartPrompt) {
-    drawPixelText("PRESS R TO RESTART", VIEW_X + 356, VIEW_Y + 6, 2, "#ff7777", "#4b0b0b");
+  const yOffset = 12;
+
+  drawPixelText("DAVE", VIEW_X + 12, VIEW_Y + yOffset, 1, "#45f35e", "#104018");
+  drawPixelText(`SCORE ${scoreText(tape[MEM.SCORE])}`, VIEW_X + 60, VIEW_Y + yOffset, 1, "#dfffe4", "#23552a");
+  drawPixelText(`LEVEL ${String(currentLevel).padStart(2, "0")}`, VIEW_X + 150, VIEW_Y + yOffset, 1, "#45f35e", "#104018");
+  drawPixelText(`GUN ${gun}`, VIEW_X + 230, VIEW_Y + yOffset, 1, "#ffffff", "#333333");
+  drawPixelText(`KEY ${key}`, VIEW_X + 295, VIEW_Y + yOffset, 1, "#55dfff", "#124451");
+  drawPixelText(`DOOR ${door}`, VIEW_X + 355, VIEW_Y + yOffset, 1, "#ffe35a", "#4f3e0b");
+
+  if (tape[MEM.GAME_WIN] !== 0) {
+    ctx.fillStyle = "#030303";
+    ctx.fillRect(VIEW_X + 420, VIEW_Y, SCREEN_WIDTH - 420, HUD_HEIGHT - 5);
+    drawPixelText("DAVE WINS!", VIEW_X + 440, VIEW_Y + yOffset, 1, "#45f35e", "#104018");
+  } else if (tape[MEM.JETPACK_COLLECTED] !== 0) {
+    const fuelPct = Math.max(0, Math.min(1, tape[MEM.JETPACK_FUEL] / JETPACK_MAX_FUEL));
+    const barWidth = Math.round(fuelPct * 70);
+    const active = tape[MEM.JETPACK_ACTIVE] !== 0;
+
+    drawPixelText("JET", VIEW_X + 430, VIEW_Y + yOffset, 1, active ? "#45f35e" : "#8a8a8a", active ? "#104018" : "#333333");
+
+    ctx.fillStyle = active ? "#45f35e" : "#555555";
+    ctx.fillRect(VIEW_X + 460, VIEW_Y + yOffset - 1, 74, 10);
+    ctx.fillStyle = "#0c0c0c";
+    ctx.fillRect(VIEW_X + 462, VIEW_Y + yOffset + 1, 70, 6);
+
+    if (barWidth > 0) {
+      let fillColor = "#20d040";
+      if (fuelPct < 0.2) {
+        const blink = Math.floor(performance.now() / 150) % 2 === 0;
+        fillColor = blink ? "#ff2020" : "#600000";
+      } else if (fuelPct < 0.5) {
+        fillColor = "#ffa000";
+      }
+      ctx.fillStyle = fillColor;
+      ctx.fillRect(VIEW_X + 462, VIEW_Y + yOffset + 1, barWidth, 6);
+    }
   } else {
-    drawPixelText(`KEY ${key}`, VIEW_X + 330, VIEW_Y + 6, 2, "#55dfff", "#124451");
-    drawPixelText(`DOOR ${door}`, VIEW_X + 424, VIEW_Y + 6, 2, "#ffe35a", "#4f3e0b");
-    drawPixelText("READY", VIEW_X + SCREEN_WIDTH - 70, VIEW_Y + 6, 2, "#ff7777", "#4b0b0b");
+    if (restartPrompt) {
+      drawPixelText("PRESS R TO RESTART", VIEW_X + 430, VIEW_Y + yOffset, 1, "#ff7777", "#4b0b0b");
+    } else {
+      drawPixelText("A BRAINFUCK GAME", VIEW_X + 470, VIEW_Y + yOffset, 1, "#ff7777", "#4b0b0b");
+    }
   }
 }
 
-function drawTransitionScreen(fromLevel, toLevel, now) {
+function drawTransitionScreen(fromLevel, toLevel, now, tape) {
   ctx.fillStyle = "#020202";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   drawHud({
-    [MEM.SCORE]: 0,
+    [MEM.SCORE]: tape?.[MEM.SCORE] ?? 0,
     [MEM.CURRENT_LEVEL]: toLevel,
     [MEM.KEY_COLLECTED]: 0,
     [MEM.DOOR_OPEN]: 0,
     [MEM.GAME_WIN]: 0,
     [MEM.GAME_DEAD]: 0,
+    [MEM.GUN_COLLECTED]: tape?.[MEM.GUN_COLLECTED] ?? 0,
+    [MEM.JETPACK_COLLECTED]: tape?.[MEM.JETPACK_COLLECTED] ?? 0,
+    [MEM.JETPACK_ACTIVE]: tape?.[MEM.JETPACK_ACTIVE] ?? 0,
+    [MEM.JETPACK_FUEL]: tape?.[MEM.JETPACK_FUEL] ?? 0,
   });
 
   const corridorY = VIEW_Y + HUD_HEIGHT + 120;
@@ -380,7 +561,7 @@ function drawTransitionScreen(fromLevel, toLevel, now) {
   drawDoor(VIEW_X - 4, corridorY, true);
   const progress = Math.min(1, Math.max(0, (1800 - (transitionUntil - now)) / 1800));
   const daveX = VIEW_X + 90 + progress * (SCREEN_WIDTH - 100);
-  const remLevels = toLevel - fromLevel;
+  const remLevels = level.levelCount - toLevel + 1;
   const levelWorld = remLevels === 1 ? "LEVEL" : "LEVELS"
   drawDave(daveX - 60, corridorY + 2, {
     dead: false,
@@ -539,6 +720,68 @@ function drawPlatformTile(tileX, tileY, cameraX) {
   }
 }
 
+function drawMudTile(tileX, tileY, cameraX) {
+  const x = tileX * TILE;
+  const y = VIEW_Y + HUD_HEIGHT + tileY * TILE;
+  const drawX = VIEW_X + x - cameraX;
+  const variant = (tileX * 5 + tileY * 9) % 4;
+
+  ctx.fillStyle = ["#c47a43", "#d08348", "#b96d3d", "#cf8550"][variant];
+  ctx.fillRect(drawX, y, TILE, TILE);
+  ctx.fillStyle = "#6f4528";
+  for (let row = 1; row < 3; row += 1) {
+    const py = y + row * 10 + ((tileX + tileY) % 3) - 9;
+    ctx.fillRect(drawX + 2, py + 4, 10, 2);
+    ctx.fillRect(drawX + 10, py + 9, 14, 2);
+    ctx.fillRect(drawX + 23, py + 2, 8, 2);
+    ctx.fillRect(drawX + 7, py + 1, 2, 7);
+    ctx.fillRect(drawX + 20, py + 7, 2, 8);
+  }
+  ctx.fillStyle = "#e0a06c";
+  ctx.fillRect(drawX + 2, y + 2, TILE - 4, 2);
+  ctx.fillRect(drawX + 5, y + 13, 9, 2);
+  ctx.fillRect(drawX + 18, y + 23, 10, 2);
+  ctx.fillStyle = "#4f2f1f";
+  ctx.fillRect(drawX, y + TILE - 3, TILE, 3);
+  if (!isSolid(tileX - 1, tileY)) {
+    ctx.fillStyle = "#e49458";
+    ctx.fillRect(drawX, y, 3, TILE);
+  }
+  if (!isSolid(tileX + 1, tileY)) {
+    ctx.fillStyle = "#5a3422";
+    ctx.fillRect(drawX + TILE - 3, y, 3, TILE);
+  }
+}
+
+function drawBlueBlockTile(tileX, tileY, cameraX) {
+  const x = tileX * TILE;
+  const y = VIEW_Y + HUD_HEIGHT + tileY * TILE;
+  const drawX = VIEW_X + x - cameraX;
+  const shimmer = (tileX * 3 + tileY * 5) % 8;
+
+  ctx.fillStyle = "#0872c8";
+  ctx.fillRect(drawX, y, TILE, TILE);
+  ctx.fillStyle = "#12a7f5";
+  ctx.fillRect(drawX, y + 3, TILE, 6);
+  ctx.fillRect(drawX, y + 17, TILE, 6);
+  ctx.fillStyle = "#003d83";
+  ctx.fillRect(drawX, y + 9, TILE, 3);
+  ctx.fillRect(drawX, y + 25, TILE, 3);
+  ctx.fillStyle = "#6ee7ff";
+  ctx.fillRect(drawX + shimmer, y + 4, 6, 5);
+  ctx.fillRect(drawX + 16 + shimmer / 2, y + 18, 7, 5);
+  ctx.fillStyle = "#001f4d";
+  ctx.fillRect(drawX, y + TILE - 3, TILE, 3);
+  if (!isSolid(tileX - 1, tileY)) {
+    ctx.fillStyle = "#25c6ff";
+    ctx.fillRect(drawX, y, 3, TILE);
+  }
+  if (!isSolid(tileX + 1, tileY)) {
+    ctx.fillStyle = "#003064";
+    ctx.fillRect(drawX + TILE - 3, y, 3, TILE);
+  }
+}
+
 function drawKey(x, y) {
   ctx.fillStyle = "#7a4f0d";
   ctx.fillRect(x + 9, y + 20, 8, 4);
@@ -689,6 +932,270 @@ function drawEnemy(x, y) {
   ctx.fillRect(x + 10, y + 14, 9, 2);
 }
 
+function drawEnemyBurst(x, y) {
+  ctx.fillStyle = "#ff2fb3";
+  ctx.fillRect(x + 8, y + 15, 5, 5);
+  ctx.fillRect(x + 19, y + 15, 5, 5);
+  ctx.fillStyle = "#ffe4fb";
+  ctx.fillRect(x + 14, y + 9, 4, 4);
+  ctx.fillRect(x + 14, y + 25, 4, 4);
+  ctx.fillStyle = "#7a0b72";
+  ctx.fillRect(x + 10, y + 22, 3, 3);
+  ctx.fillRect(x + 21, y + 22, 3, 3);
+}
+
+function drawFlyingEnemy(x, y) {
+  const now = performance.now();
+  const armFrame = Math.floor(now / 150) % 4;
+
+  const flyingEnemyColors = {
+    '.': null,
+    'k': '#0d0b0e',
+    's': '#3a4d59',
+    'm': '#738c9c',
+    'l': '#b2c5d1',
+    'w': '#ffffff',
+    'r': '#ff1a40',
+    'p': '#ff8093',
+    'o': '#ff5500',
+    'y': '#ffcc00',
+    'g': '#4e5a60',
+    'h': '#dce5e7',
+    'b': '#8a9ea7',
+    'j': '#5c6e78',
+    'c': '#c8d6dc',
+  };
+
+  function drawPixelGrid(grid, startCol, startRow, mirror = false) {
+    for (let r = 0; r < grid.length; r++) {
+      const rowStr = grid[r];
+      for (let c = 0; c < rowStr.length; c++) {
+        const char = mirror ? rowStr[rowStr.length - 1 - c] : rowStr[c];
+        const color = flyingEnemyColors[char];
+        if (color) {
+          ctx.fillStyle = color;
+          ctx.fillRect(x + startCol + c, y + startRow + r, 1, 1);
+        }
+      }
+    }
+  }
+
+  if (armFrame === 0) {
+    const leftUpperArm = [
+      "..kk......",
+      ".kbhk.....",
+      "kbgk......",
+      ".kbhk.....",
+      "..kbbk....",
+      "...kbgk...",
+      "....kck...",
+    ];
+    const leftLowerArm = [
+      "....kck...",
+      "...kbgk...",
+      "..kbbk....",
+      ".kbhk.....",
+      "kbgk......",
+      ".kk.......",
+    ];
+    drawPixelGrid(leftUpperArm, 1, 4, false);
+    drawPixelGrid(leftUpperArm, 22, 4, true);
+    drawPixelGrid(leftLowerArm, 1, 16, false);
+    drawPixelGrid(leftLowerArm, 22, 16, true);
+  } else if (armFrame === 1) {
+    const leftUpperArm = [
+      "..........",
+      "kkkkkk....",
+      "khhbbgk...",
+      "kckkbgk...",
+      "....kkk...",
+    ];
+    const leftLowerArm = [
+      "....kkk...",
+      "kckkbgk...",
+      "khhbbgk...",
+      "kkkkkk....",
+    ];
+    drawPixelGrid(leftUpperArm, 0, 7, false);
+    drawPixelGrid(leftUpperArm, 23, 7, true);
+    drawPixelGrid(leftLowerArm, 0, 17, false);
+    drawPixelGrid(leftLowerArm, 23, 17, true);
+  } else if (armFrame === 2) {
+    const leftUpperArm = [
+      "....kck...",
+      "...kbgk...",
+      "..kbbk....",
+      ".kbhk.....",
+      "kbgk......",
+      ".kbhk.....",
+      "..kk......",
+    ];
+    const leftLowerArm = [
+      ".kk.......",
+      "kbgk......",
+      ".kbhk.....",
+      "..kbbk....",
+      "...kbgk...",
+      "....kck...",
+    ];
+    drawPixelGrid(leftUpperArm, 1, 5, false);
+    drawPixelGrid(leftUpperArm, 22, 5, true);
+    drawPixelGrid(leftLowerArm, 1, 15, false);
+    drawPixelGrid(leftLowerArm, 22, 15, true);
+  } else {
+    const leftUpperArm = [
+      "kck.......",
+      ".kbgk.....",
+      "..kbbk....",
+      "...kbhk...",
+      "....kbgk..",
+      ".....kkk..",
+    ];
+    const leftLowerArm = [
+      ".....kkk..",
+      "....kbgk..",
+      "...kbhk...",
+      "..kbbk....",
+      ".kbgk.....",
+      "kck.......",
+    ];
+    drawPixelGrid(leftUpperArm, 0, 5, false);
+    drawPixelGrid(leftUpperArm, 23, 5, true);
+    drawPixelGrid(leftLowerArm, 0, 16, false);
+    drawPixelGrid(leftLowerArm, 23, 16, true);
+  }
+
+  const flyingEnemyBodyGrid = [
+    "....kkkkkkk....",
+    "..kkllmsssskk..",
+    ".klllmmmmsssssk.",
+    "klwllkkkkkkksssk",
+    "klwlkrrrrrrrksks",
+    "klmkrppppppprkss",
+    "klmkrppwkppprkss",
+    "klmkrppkkkpprkss",
+    "klmkrppppppprkss",
+    "klwlkrrrrrrrksks",
+    "klwllkkkkkkksssk",
+    ".kmmmmkkkksssk.",
+    "..kkkkkkkkkkk..",
+  ];
+  drawPixelGrid(flyingEnemyBodyGrid, 9, 8, false);
+
+  const flameFrame = Math.floor(now / 80) % 3;
+  if (flameFrame === 0) {
+    ctx.fillStyle = "#ff5500";
+    ctx.fillRect(x + 15, y + 21, 4, 1);
+    ctx.fillStyle = "#ffcc00";
+    ctx.fillRect(x + 16, y + 22, 2, 1);
+  } else if (flameFrame === 1) {
+    ctx.fillStyle = "#ff2a00";
+    ctx.fillRect(x + 14, y + 21, 6, 1);
+    ctx.fillStyle = "#ff5500";
+    ctx.fillRect(x + 15, y + 22, 4, 1);
+    ctx.fillStyle = "#ffcc00";
+    ctx.fillRect(x + 16, y + 23, 2, 1);
+  } else {
+    ctx.fillStyle = "#ff5500";
+    ctx.fillRect(x + 15, y + 21, 4, 1);
+    ctx.fillStyle = "#ffcc00";
+    ctx.fillRect(x + 16, y + 22, 2, 1);
+  }
+}
+
+function drawGunPickup(x, y) {
+  ctx.fillStyle = "#6b3518";
+  ctx.fillRect(x + 10, y + 18, 5, 8);
+  ctx.fillStyle = "#d9d9d9";
+  ctx.fillRect(x + 10, y + 12, 14, 5);
+  ctx.fillStyle = "#f4f4f4";
+  ctx.fillRect(x + 12, y + 10, 7, 2);
+  ctx.fillStyle = "#5d5d5d";
+  ctx.fillRect(x + 21, y + 14, 6, 2);
+  ctx.fillRect(x + 14, y + 17, 4, 3);
+  ctx.fillStyle = "#2b2b2b";
+  ctx.fillRect(x + 16, y + 20, 3, 2);
+}
+
+function drawJetpackPickup(x, y) {
+  const steelDark = "#126b27";
+  const steelMid = "#2baf4a";
+  const steelLight = "#6bff8f";
+  const steelHighlight = "#ffffff";
+  const darkMetal = "#1f2226";
+  const copper = "#ad7222";
+  const copperDark = "#5e3e11";
+  
+  ctx.fillStyle = copperDark;
+  ctx.fillRect(x + 8, y + 24, 4, 3);
+  ctx.fillRect(x + 20, y + 24, 4, 3);
+  
+  ctx.fillStyle = steelMid;
+  ctx.fillRect(x + 8, y + 6, 6, 18);
+  ctx.fillStyle = steelLight;
+  ctx.fillRect(x + 8, y + 6, 2, 18);
+  ctx.fillStyle = steelHighlight;
+  ctx.fillRect(x + 8, y + 7, 1, 6);
+  ctx.fillStyle = steelDark;
+  ctx.fillRect(x + 12, y + 6, 2, 18);
+  
+  ctx.fillStyle = steelLight;
+  ctx.fillRect(x + 9, y + 4, 4, 2);
+  
+  ctx.fillStyle = steelMid;
+  ctx.fillRect(x + 18, y + 6, 6, 18);
+  ctx.fillStyle = steelLight;
+  ctx.fillRect(x + 18, y + 6, 2, 18);
+  ctx.fillStyle = steelHighlight;
+  ctx.fillRect(x + 18, y + 7, 1, 6);
+  ctx.fillStyle = steelDark;
+  ctx.fillRect(x + 22, y + 6, 2, 18);
+  
+  ctx.fillStyle = steelLight;
+  ctx.fillRect(x + 19, y + 4, 4, 2);
+  
+  ctx.fillStyle = copper;
+  ctx.fillRect(x + 14, y + 12, 4, 2);
+  ctx.fillRect(x + 15, y + 14, 2, 2);
+  
+  ctx.fillStyle = darkMetal;
+  ctx.fillRect(x + 7, y + 8, 18, 2);
+  ctx.fillRect(x + 7, y + 18, 18, 2);
+  
+  ctx.fillStyle = "#ffcc00";
+  ctx.fillRect(x + 15, y + 10, 2, 2);
+}
+
+function drawProjectile(x, y, right) {
+  const px = x + (right ? 30 : -8);
+  const py = y + 20;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(px, py, 9, 3);
+  ctx.fillStyle = "#ffd45c";
+  ctx.fillRect(right ? px - 3 : px + 9, py + 1, 3, 1);
+}
+
+function drawEnemyProjectile(x, y, right) {
+  const px = x + (right ? 30 : -8);
+  const py = y + 20;
+  const now = performance.now();
+  const pulse = Math.floor(now / 50) % 2 === 0;
+
+  ctx.fillStyle = "#8b0000";
+  ctx.fillRect(px, py, 7, 3);
+
+  ctx.fillStyle = "#ff5500";
+  ctx.fillRect(px + 1, py + 1, 5, 1);
+
+  ctx.fillStyle = "#ffcc00";
+  ctx.fillRect(px + 2, py + 1, 3, 1);
+
+  ctx.fillStyle = pulse ? "#ff5500" : "#ffcc00";
+  ctx.fillRect(right ? px - 2 : px + 7, py + 1, 1, 1);
+  ctx.fillStyle = pulse ? "#ffcc00" : "#ff5500";
+  ctx.fillRect(right ? px - 4 : px + 9, py + (pulse ? 0 : 2), 1, 1);
+}
+
 function drawDave(x, y, state) {
   const s = RENDER_SCALE;
   const px = x + s;
@@ -738,6 +1245,13 @@ function drawDave(x, y, state) {
     spriteRect(12, 12, 2, 1, skinDark);
   }
 
+  if (state.hasGun) {
+    spriteRect(13, 10, 3, 1, "#dcdcdc");
+    spriteRect(15, 10, 1, 1, "#ffffff");
+    spriteRect(13, 11, 1, 2, "#4d4d4d");
+    spriteRect(12, 12, 2, 1, "#2a2a2a");
+  }
+
   if (jumping) {
     spriteRect(5, 12, 7, 2, pants);
     spriteRect(6, 13, 3, 1, "#55c4ff");
@@ -755,6 +1269,93 @@ function drawDave(x, y, state) {
     spriteRect(6, 13, 3, 1, "#55c4ff");
     spriteRect(3, 15, 5, 1, shoe);
     spriteRect(9, 15, 5, 1, shoe);
+  }
+
+  if (state.hasJetpack && !state.dead) {
+    const strapColor = "#55555d";
+    const darkMetal = "#1f2226";
+    const steelDark = "#126b27";
+    const steelMid = "#2baf4a";
+    const steelLight = "#6bff8f";
+    const steelHighlight = "#ffffff";
+    const copper = "#ad7222";
+    const copperDark = "#5e3e11";
+    
+    spriteRect(5, 10, 1, 1, strapColor);
+    spriteRect(5, 11, 2, 1, strapColor);
+
+    spriteRect(1, 9, 2, 5, steelDark);
+    spriteRect(1, 8, 1, 1, steelDark);
+    
+    spriteRect(3, 8, 2, 6, steelMid);
+    spriteRect(3, 8, 1, 6, steelLight);
+    spriteRect(3, 9, 1, 3, steelHighlight);
+    spriteRect(4, 8, 1, 6, steelDark);
+    spriteRect(3, 7, 1, 1, steelLight);
+    
+    spriteRect(2, 9, 2, 1, darkMetal);
+    spriteRect(2, 12, 2, 1, darkMetal);
+
+    spriteRect(2, 10, 1, 2, copper);
+    spriteRect(3, 11, 1, 1, "#ff9900");
+
+    spriteRect(1, 14, 1, 1, copperDark);
+    spriteRect(4, 14, 1, 1, copperDark);
+
+    const active = state.isJetpackActive;
+    if (active) {
+      const blink = Math.floor(performance.now() / 120) % 2 === 0;
+      spriteRect(3, 10, 1, 1, blink ? "#3bf2ff" : "#095861");
+      spriteRect(4, 12, 1, 1, blink ? "#ff2a2a" : "#610909");
+    } else {
+      spriteRect(3, 10, 1, 1, "#042c30");
+      spriteRect(4, 12, 1, 1, "#400606");
+    }
+
+    if (active) {
+      const isMoving = keys.has("ArrowUp") || keys.has("ArrowDown");
+      const frame = Math.floor(performance.now() / 50) % 3;
+      
+      if (isMoving) {
+        if (frame === 0) {
+          spriteRect(1, 15, 1, 2, "#ffffff");
+          spriteRect(0, 16, 2, 3, "#ffd43f");
+          spriteRect(0, 18, 1, 2, "#ff7c00");
+          spriteRect(4, 15, 1, 2, "#ffffff");
+          spriteRect(4, 16, 2, 3, "#ffd43f");
+          spriteRect(5, 18, 1, 2, "#ff7c00");
+        } else if (frame === 1) {
+          spriteRect(0, 15, 2, 3, "#ffffff");
+          spriteRect(0, 17, 2, 2, "#ffd43f");
+          spriteRect(0, 19, 1, 3, "#ff7c00");
+          spriteRect(4, 15, 2, 3, "#ffffff");
+          spriteRect(4, 17, 2, 2, "#ffd43f");
+          spriteRect(5, 19, 1, 3, "#ff7c00");
+        } else {
+          spriteRect(1, 15, 1, 2, "#ffffff");
+          spriteRect(0, 16, 2, 2, "#ffd43f");
+          spriteRect(0, 18, 2, 2, "#ff7c00");
+          spriteRect(0, 20, 1, 2, "#ff2020");
+          spriteRect(4, 15, 1, 2, "#ffffff");
+          spriteRect(4, 16, 2, 2, "#ffd43f");
+          spriteRect(4, 18, 2, 2, "#ff7c00");
+          spriteRect(5, 20, 1, 2, "#ff2020");
+        }
+      } else {
+        if (frame === 0) {
+          spriteRect(1, 15, 1, 2, "#ffffff");
+          spriteRect(4, 15, 1, 2, "#ffffff");
+        } else if (frame === 1) {
+          spriteRect(1, 15, 1, 1, "#ffd43f");
+          spriteRect(0, 16, 1, 1, "#ff7c00");
+          spriteRect(4, 15, 1, 1, "#ffd43f");
+          spriteRect(5, 16, 1, 1, "#ff7c00");
+        } else {
+          spriteRect(1, 15, 1, 2, "#ffd43f");
+          spriteRect(4, 15, 1, 2, "#ffd43f");
+        }
+      }
+    }
   }
 
   if (state.dead) {
@@ -797,6 +1398,46 @@ function smoothEnemy(enemy, tileX, tileY, direction, timer) {
   return {
     x: Math.round(visualEnemy.x),
     y: Math.round(visualEnemy.y),
+  };
+}
+
+function smoothFlyingEnemy(enemy, tileX, tileY, direction, timer, visState) {
+  const startX = tileX * TILE;
+  const startY = tileY * TILE;
+  if (!visState.initialized) {
+    visState.initialized = true;
+    visState.x = startX;
+    visState.y = startY;
+  }
+
+  const delay = 18;
+  const clampedTimer = Math.max(0, Math.min(delay, timer));
+  const progress = (delay - clampedTimer) / delay;
+  let targetTileX = tileX;
+  let targetTileY = tileY;
+
+  if (direction === 0) {
+    targetTileX = tileX + 1;
+    targetTileY = tileY + 1;
+  } else if (direction === 1) {
+    targetTileX = tileX - 1;
+    targetTileY = tileY + 1;
+  } else if (direction === 2) {
+    targetTileX = tileX - 1;
+    targetTileY = tileY - 1;
+  } else if (direction === 3) {
+    targetTileX = tileX + 1;
+    targetTileY = tileY - 1;
+  }
+
+  const targetX = targetTileX * TILE;
+  const targetY = targetTileY * TILE;
+  visState.x = startX + (targetX - startX) * progress;
+  visState.y = startY + (targetY - startY) * progress;
+
+  return {
+    x: Math.round(visState.x),
+    y: Math.round(visState.y),
   };
 }
 
@@ -846,6 +1487,10 @@ function playAudioEvent(event) {
     playDeathSound();
   } else if (event === 6) {
     playWinSound();
+  } else if (event === 7) {
+    playShootSound();
+  } else if (event === 8) {
+    playHitSound();
   }
 }
 
@@ -894,6 +1539,18 @@ function playWinSound() {
   arpeggio([523, 659, 784, 1047, 1319], 0.06, "square", 0.046);
   chord([523, 659, 784], 0.22, "triangle", 0.032, 0.28);
   tone(1568, 0.12, "square", 0.028, 130, 0.34);
+}
+
+function playShootSound() {
+  tone(1180, 0.025, "square", 0.055, -120);
+  tone(520, 0.045, "sawtooth", 0.038, -260, 0.008);
+  noise(0.035, 0.035, 0, "highpass", 2600);
+}
+
+function playHitSound() {
+  noise(0.08, 0.06, 0, "bandpass", 1200);
+  tone(160, 0.08, "square", 0.05, -120);
+  arpeggio([360, 290, 220], 0.028, "triangle", 0.035);
 }
 
 function tone(frequency, duration, type, volume, slide = 0, delay = 0) {
@@ -958,6 +1615,8 @@ window.addEventListener("keydown", (event) => {
     event.code === "ArrowLeft" ||
     event.code === "ArrowRight" ||
     event.code === "ArrowUp" ||
+    event.code === "ArrowDown" ||
+    event.code === "AltLeft" ||
     event.code === "Space" ||
     event.code === "Enter" ||
     event.code === "KeyR"
@@ -969,10 +1628,18 @@ window.addEventListener("keydown", (event) => {
       return;
     }
 
+    if (event.code === "AltLeft" && !keys.has("AltLeft")) {
+      jetpackToggleQueued = true;
+    }
+
     keys.add(event.code);
-    if ((event.code === "ArrowUp" || event.code === "Space") && !jumpHeld) {
+    if (event.code === "ArrowUp" && !jumpHeld) {
       jumpQueued = true;
       jumpHeld = true;
+    }
+    if (event.code === "Space" && !shootHeld) {
+      shootQueued = true;
+      shootHeld = true;
     }
     if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
       horizontalIntent = event.code;
@@ -987,8 +1654,11 @@ window.addEventListener("pointerdown", () => {
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
-  if (event.code === "ArrowUp" || event.code === "Space") {
-    jumpHeld = keys.has("ArrowUp") || keys.has("Space");
+  if (event.code === "ArrowUp") {
+    jumpHeld = keys.has("ArrowUp");
+  }
+  if (event.code === "Space") {
+    shootHeld = false;
   }
   if (event.code === horizontalIntent) {
     if (keys.has("ArrowLeft")) {
@@ -1008,24 +1678,35 @@ async function main() {
   });
 
   const vm = new BrainfuckVM(rom, { tapeSize: 512 });
-  vm.tape[MEM.PLAYER_X] = level.playerStart.x;
+  vm.tape[MEM.PLAYER_X] = localTileX(1, level.playerStart.x);
   vm.tape[MEM.PLAYER_Y] = level.playerStart.y;
   vm.tape[MEM.PLAYER_FACING] = 1;
-  vm.tape[MEM.ENEMY_X] = level.enemy?.x ?? 0;
-  vm.tape[MEM.ENEMY_Y] = level.enemy?.y ?? 0;
+  const firstEnemy = entityForLevel(level.enemies, 1);
+  vm.tape[MEM.ENEMY_X] = firstEnemy ? localTileX(1, firstEnemy.x) : 0;
+  vm.tape[MEM.ENEMY_Y] = firstEnemy?.y ?? 0;
   vm.tape[MEM.ENEMY_DIR] = 1;
 
   function tickBrainfuck() {
-    const jumpInput = jumpQueued ? 1 : 0;
+    const jetpackActive = vm.tape[MEM.JETPACK_ACTIVE] !== 0;
+    const jumpInput = jetpackActive ? (keys.has("ArrowUp") ? 1 : 0) : (jumpQueued ? 1 : 0);
+    const downInput = jetpackActive ? (keys.has("ArrowDown") ? 1 : 0) : 0;
+    const shootInput = shootQueued ? 1 : 0;
+    const jetpackToggleInput = jetpackToggleQueued ? 1 : 0;
     jumpQueued = false;
+    shootQueued = false;
+    jetpackToggleQueued = false;
+
     vm.tape[MEM.INPUT_RIGHT] = horizontalIntent === "ArrowRight" ? 1 : 0;
     vm.tape[MEM.INPUT_LEFT] = horizontalIntent === "ArrowLeft" ? 1 : 0;
     vm.tape[MEM.INPUT_JUMP] = jumpInput;
+    vm.tape[MEM.INPUT_DOWN] = downInput;
+    vm.tape[MEM.INPUT_SHOOT] = shootInput;
+    vm.tape[MEM.INPUT_JETPACK_TOGGLE] = jetpackToggleInput;
     vm.tape[MEM.INPUT_RESTART] = keys.has("KeyR") ? 1 : 0;
     vm.tape[MEM.TICK_DONE] = 0;
     vm.tape[MEM.TICK_REQUESTED] = 1;
     vm.rewind();
-    return vm.runUntil((machine) => machine.tape[MEM.TICK_DONE] === 1, 900000);
+    return vm.runUntil((machine) => machine.tape[MEM.TICK_DONE] === 1, 1000000);
   }
 
   let accumulator = 0;
@@ -1046,6 +1727,14 @@ async function main() {
       }
     }
 
+    if (transitionUntil > now && presentedLevel > transitionFromLevel) {
+      accumulator = 0;
+      previousTime = now;
+      drawTransitionScreen(transitionFromLevel, presentedLevel, now, vm.tape);
+      requestAnimationFrame(frame);
+      return;
+    }
+
     const elapsed = Math.min(now - previousTime, MAX_FRAME_MS);
     previousTime = now;
     accumulator += elapsed;
@@ -1054,17 +1743,24 @@ async function main() {
       const previousLevel = vm.tape[MEM.CURRENT_LEVEL] || 1;
       tickBrainfuck();
       consumeAudio(vm.tape);
+
       const currentLevel = vm.tape[MEM.CURRENT_LEVEL] || 1;
       if (currentLevel !== previousLevel) {
         transitionFromLevel = previousLevel;
         presentedLevel = currentLevel;
         transitionUntil = now + 2000;
+        visualEnemy.initialized = false;
+        visualFlyingEnemy.initialized = false;
+        visualFlyingEnemy2.initialized = false;
+        enemyDeathTime = null;
+        flyingEnemyDeathTime = null;
+        flyingEnemyDeathTime2 = null;
       }
       accumulator -= STEP_MS;
     }
 
     if (transitionUntil > now && presentedLevel > transitionFromLevel) {
-      drawTransitionScreen(transitionFromLevel, presentedLevel, now);
+      drawTransitionScreen(transitionFromLevel, presentedLevel, now, vm.tape);
     } else {
       draw(vm.tape);
     }
