@@ -1,5 +1,11 @@
 # Davefuck
 
+![Echopoint SVG](https://echopoint.ujjwalvivek.com/svg/badges/custom?leftText=brainfuck&rightText=ROM&badgeColor=808000&textColor=ffffff)
+![Echopoint SVG](https://echopoint.ujjwalvivek.com/svg/badges/custom?leftText=renderer&rightText=JS&badgeColor=804000&textColor=ffffff)
+![Echopoint SVG](https://echopoint.ujjwalvivek.com/svg/badges/custom?leftText=60KB&rightText=WEB+PAYLOAD&badgeColor=400040&textColor=ffffff)
+
+<img src="https://github.com/user-attachments/assets/2f5416b9-612f-4992-aef6-2e55ce0ff9e0" alt="davefuck_showcase" width="1000">
+
 Dangerous Dave written in Brainfuck that runs in the browser, with a ~60KB payload.
 
 Anything happening in game is because `rom/dave.bf` changes cells on a Brainfuck tape. The JavaScript code is just the host for the ROM.
