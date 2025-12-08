@@ -1,0 +1,19 @@
+include "../../game/memory.dasm"
+
+const START_X 4
+const MAX_X 30
+
+set PLAYER_X START_X
+clear PLAYER_Y
+
+ifz PLAYER_Y
+  inc PLAYER_X
+end
+
+ifeq PLAYER_X 5
+  inc PLAYER_Y
+end
+
+ifneq PLAYER_X MAX_X
+  inc PLAYER_X
+end
