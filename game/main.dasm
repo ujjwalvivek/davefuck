@@ -1,0 +1,364 @@
+include "memory.dasm"
+include "generated/level.dasm"
+
+const JUMP_UP_TICKS 21
+const JETPACK_MAX_FUEL 150
+const JETPACK_BURN_RATE 4
+
+macro audio EVENT
+  set AUDIO_EVENT EVENT
+  inc AUDIO_SEQ
+end
+
+macro reset_game
+  set PLAYER_X PLAYER_START_X
+  set PLAYER_Y PLAYER_START_Y
+  clear PLAYER_SUB_X
+  clear PLAYER_SUB_Y
+  set PLAYER_FACING 1
+  clear PLAYER_JUMP_PHASE
+  clear PLAYER_JUMP_TIMER
+  clear KEY_COLLECTED
+  clear DOOR_OPEN
+  clear SCORE
+  clear AUDIO_EVENT
+  clear AUDIO_SEQ
+  clear GUN_COLLECTED
+  clear JETPACK_ACTIVE
+  clear JETPACK_COLLECTED
+  clear JETPACK_FUEL
+  clear JETPACK_BURN_TIMER
+  clear JETPACK_TOGGLE_DONE
+  clear PROJECTILE_ACTIVE
+  clear PROJECTILE_X
+  clear PROJECTILE_Y
+  clear PROJECTILE_DIR
+  set CURRENT_LEVEL 1
+  call reset_coins
+  call reset_jetpacks
+  call reset_enemy
+  call reset_flying_enemy
+  clear GAME_DEAD
+  clear GAME_WIN
+end
+
+macro step_sub CELL FROM TO
+  ifz PLAYER_STEP_DONE
+    ifeq CELL FROM
+      set CELL TO
+      set PLAYER_STEP_DONE 1
+    end
+  end
+end
+
+macro clear_sub CELL FROM
+  ifz PLAYER_STEP_DONE
+    ifeq CELL FROM
+      clear CELL
+      set PLAYER_STEP_DONE 1
+    end
+  end
+end
+
+macro move_right
+  clear PLAYER_STEP_DONE
+  set PLAYER_FACING 1
+  call check_blocked_right
+  ifnz COLLISION_BLOCKED
+    set PLAYER_STEP_DONE 1
+  end
+  ifz PLAYER_STEP_DONE
+    ifeq PLAYER_SUB_X 15
+      inc PLAYER_X
+      clear PLAYER_SUB_X
+      set PLAYER_STEP_DONE 1
+    end
+  end
+  ifz PLAYER_STEP_DONE
+    ifz PLAYER_SUB_X
+      set PLAYER_SUB_X 1
+      set PLAYER_STEP_DONE 1
+    end
+  end
+  call step_sub PLAYER_SUB_X 14 15
+  call step_sub PLAYER_SUB_X 13 14
+  call step_sub PLAYER_SUB_X 12 13
+  call step_sub PLAYER_SUB_X 11 12
+  call step_sub PLAYER_SUB_X 10 11
+  call step_sub PLAYER_SUB_X 9 10
+  call step_sub PLAYER_SUB_X 8 9
+  call step_sub PLAYER_SUB_X 7 8
+  call step_sub PLAYER_SUB_X 6 7
+  call step_sub PLAYER_SUB_X 5 6
+  call step_sub PLAYER_SUB_X 4 5
+  call step_sub PLAYER_SUB_X 3 4
+  call step_sub PLAYER_SUB_X 2 3
+  call step_sub PLAYER_SUB_X 1 2
+end
+
+macro move_left
+  clear PLAYER_STEP_DONE
+  clear PLAYER_FACING
+  call clear_sub PLAYER_SUB_X 1
+  call step_sub PLAYER_SUB_X 2 1
+  call step_sub PLAYER_SUB_X 3 2
+  call step_sub PLAYER_SUB_X 4 3
+  call step_sub PLAYER_SUB_X 5 4
+  call step_sub PLAYER_SUB_X 6 5
+  call step_sub PLAYER_SUB_X 7 6
+  call step_sub PLAYER_SUB_X 8 7
+  call step_sub PLAYER_SUB_X 9 8
+  call step_sub PLAYER_SUB_X 10 9
+  call step_sub PLAYER_SUB_X 11 10
+  call step_sub PLAYER_SUB_X 12 11
+  call step_sub PLAYER_SUB_X 13 12
+  call step_sub PLAYER_SUB_X 14 13
+  call step_sub PLAYER_SUB_X 15 14
+  ifz PLAYER_STEP_DONE
+    ifz PLAYER_SUB_X
+      call check_blocked_left
+      ifz COLLISION_BLOCKED
+        dec PLAYER_X
+        set PLAYER_SUB_X 14
+      end
+      set PLAYER_STEP_DONE 1
+    end
+  end
+end
+
+macro move_up
+  clear PLAYER_STEP_DONE
+  clear COLLISION_BLOCKED
+  ifz PLAYER_SUB_Y
+    call check_blocked_up
+    ifz COLLISION_BLOCKED
+      dec PLAYER_Y
+      set PLAYER_SUB_Y 14
+    end
+    set PLAYER_STEP_DONE 1
+  end
+  ifz PLAYER_STEP_DONE
+    ifeq PLAYER_SUB_Y PLAYER_HEAD_CLEARANCE_SUB_Y
+      call check_blocked_up
+      ifnz COLLISION_BLOCKED
+        set PLAYER_STEP_DONE 1
+      end
+    end
+  end
+  call clear_sub PLAYER_SUB_Y 2
+  call step_sub PLAYER_SUB_Y 4 2
+  call step_sub PLAYER_SUB_Y 6 4
+  call step_sub PLAYER_SUB_Y 8 6
+  call step_sub PLAYER_SUB_Y 10 8
+  call step_sub PLAYER_SUB_Y 12 10
+  call step_sub PLAYER_SUB_Y 14 12
+end
+
+macro move_down
+  clear PLAYER_STEP_DONE
+  clear COLLISION_BLOCKED
+  ifeq PLAYER_SUB_Y 14
+    inc PLAYER_Y
+    clear PLAYER_SUB_Y
+    set PLAYER_STEP_DONE 1
+  end
+  call step_sub PLAYER_SUB_Y 12 14
+  call step_sub PLAYER_SUB_Y 10 12
+  call step_sub PLAYER_SUB_Y 8 10
+  call step_sub PLAYER_SUB_Y 6 8
+  call step_sub PLAYER_SUB_Y 4 6
+  call step_sub PLAYER_SUB_Y 2 4
+  ifz PLAYER_STEP_DONE
+    ifz PLAYER_SUB_Y
+      call check_blocked_down
+      ifz COLLISION_BLOCKED
+        set PLAYER_SUB_Y 2
+      end
+      set PLAYER_STEP_DONE 1
+    end
+  end
+end
+
+macro spawn_projectile
+  ifz PROJECTILE_ACTIVE
+    ifnz GUN_COLLECTED
+      ifnz INPUT_SHOOT
+        set PROJECTILE_ACTIVE 1
+        copy PLAYER_Y PROJECTILE_Y
+        copy PLAYER_FACING PROJECTILE_DIR
+        ifnz PLAYER_FACING
+          copy PLAYER_X PROJECTILE_X
+          inc PROJECTILE_X
+        end
+        ifz PLAYER_FACING
+          copy PLAYER_X PROJECTILE_X
+          dec PROJECTILE_X
+        end
+        call audio AUDIO_SHOOT
+      end
+    end
+  end
+end
+
+macro tick_projectile
+  ifnz PROJECTILE_ACTIVE
+    ifnz PROJECTILE_DIR
+      inc PROJECTILE_X
+    end
+    ifz PROJECTILE_DIR
+      dec PROJECTILE_X
+    end
+    call check_projectile_solid
+    ifnz COLLISION_BLOCKED
+      clear PROJECTILE_ACTIVE
+    end
+    ifnz PROJECTILE_ACTIVE
+      call check_projectile_enemy
+    end
+  end
+end
+
+macro tick_jetpack_state
+  clear JETPACK_TOGGLE_DONE
+  ifnz JETPACK_COLLECTED
+    ifnz INPUT_JETPACK_TOGGLE
+      ifnz JETPACK_ACTIVE
+        clear JETPACK_ACTIVE
+        set JETPACK_TOGGLE_DONE 1
+      end
+      ifz JETPACK_TOGGLE_DONE
+        ifnz JETPACK_FUEL
+          set JETPACK_ACTIVE 1
+          call audio AUDIO_PICKUP
+        end
+      end
+    end
+  end
+    ifnz JETPACK_ACTIVE
+    ifnz JETPACK_FUEL
+      inc JETPACK_BURN_TIMER
+      ifeq JETPACK_BURN_TIMER JETPACK_BURN_RATE
+        clear JETPACK_BURN_TIMER
+        dec JETPACK_FUEL
+      end
+    end
+    ifz JETPACK_FUEL
+      clear JETPACK_ACTIVE
+      clear JETPACK_COLLECTED
+      call audio AUDIO_DEATH
+    end
+  end
+end
+
+macro tick_vertical
+  ifnz JETPACK_ACTIVE
+    clear PLAYER_JUMP_PHASE
+    clear PLAYER_JUMP_TIMER
+    ifnz INPUT_JUMP
+      call move_up
+    end
+    ifnz INPUT_DOWN
+      call move_down
+    end
+  end
+  ifz JETPACK_ACTIVE
+    ifnz INPUT_JUMP
+      ifz PLAYER_JUMP_PHASE
+        call check_blocked_down
+        ifnz COLLISION_BLOCKED
+          set PLAYER_JUMP_PHASE 1
+          set PLAYER_JUMP_TIMER JUMP_UP_TICKS
+          call audio AUDIO_JUMP
+        end
+      end
+    end
+
+    ifeq PLAYER_JUMP_PHASE 2
+      call move_down
+      ifnz COLLISION_BLOCKED
+        clear PLAYER_JUMP_PHASE
+        call audio AUDIO_LAND
+      end
+    end
+
+    ifeq PLAYER_JUMP_PHASE 1
+      call move_up
+      ifnz COLLISION_BLOCKED
+        clear PLAYER_JUMP_TIMER
+      end
+      ifnz PLAYER_JUMP_TIMER
+        dec PLAYER_JUMP_TIMER
+      end
+      ifz PLAYER_JUMP_TIMER
+        set PLAYER_JUMP_PHASE 2
+      end
+    end
+
+    ifz PLAYER_JUMP_PHASE
+      call check_blocked_down
+      ifz COLLISION_BLOCKED
+        call move_down
+      end
+    end
+  end
+end
+
+macro tick
+  clear TICK_DONE
+  ifnz TICK_REQUESTED
+    ifz GAME_STARTED
+      call reset_game
+      set GAME_STARTED 1
+    end
+    ifnz INPUT_RESTART
+      call reset_game
+      set GAME_STARTED 1
+    end
+
+    ifz GAME_DEAD
+      ifz GAME_WIN
+        call check_hazards
+        ifz GAME_DEAD
+          call check_exit
+          ifz GAME_WIN
+            ifnz INPUT_LEFT
+              call move_left
+              ifnz PLAYER_JUMP_PHASE
+                call move_left
+              end
+            end
+            ifnz INPUT_RIGHT
+              call move_right
+              ifnz PLAYER_JUMP_PHASE
+                call move_right
+              end
+            end
+
+            call tick_vertical
+            call check_coins
+            call check_gun
+            call check_jetpack
+            call tick_jetpack_state
+            call check_key
+            call tick_projectile
+            call check_hazards
+            call check_enemy_hit
+            call check_enemy_projectile_hit
+            call tick_enemy
+            call tick_enemy_projectiles
+            call spawn_projectile
+            ; call tick_projectile
+            ; call check_hazards
+            ; call check_enemy_hit
+            call check_exit
+          end
+        end
+      end
+    end
+
+    clear TICK_REQUESTED
+    set TICK_DONE 1
+  end
+end
+
+call tick
