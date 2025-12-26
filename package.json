@@ -3,8 +3,31 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node runners/web/vm.js --serve",
-    "test": "node --test runners/web",
-    "size": "node -e \"const fs=require('fs'); const zlib=require('zlib'); const files=['runners/web/index.html','runners/web/runtime.js','runners/web/vm.js','rom/dave.bf','game/generated/level.js']; let raw=0,gzip=0; for (const file of files) { const data=fs.readFileSync(file); const gz=zlib.gzipSync(data).length; raw+=data.length; gzip+=gz; console.log(`${file}: ${data.length} raw bytes, ${gz} gzip bytes`); } console.log(`total: ${raw} raw bytes, ${gzip} gzip bytes`);\""
+    
+    "compile": "cargo run --quiet --manifest-path compiler/Cargo.toml --",
+    
+    "asm": "npm run compile -- game/main.dasm -o rom/dave.bf",
+    "asm:fmt": "npm run compile -- game/main.dasm -o rom/dave.original.bf && npm run compile -- --fmt rom/dave.original.bf",
+    
+    "rom": "npm run run:native",
+    "build:native": "npm run asm && cargo build --release --manifest-path runners/native/Cargo.toml",
+    "build:web": "npm run asm && node -e \"const fs=require('fs'); fs.rmSync('dist',{recursive:true,force:true}); fs.mkdirSync('dist/rom',{recursive:true}); fs.mkdirSync('dist/game/generated',{recursive:true}); fs.copyFileSync('runners/web/index.html','dist/index.html'); fs.copyFileSync('runners/web/runtime.js','dist/runtime.js'); fs.copyFileSync('runners/web/vm.js','dist/vm.js'); fs.copyFileSync('rom/dave.bf','dist/rom/dave.bf'); fs.copyFileSync('game/generated/level.js','dist/game/generated/level.js'); fs.copyFileSync('runners/web/_headers','dist/_headers');\"",
+    "build:web:min": "npm run build:web && node -e \"const fs=require('fs'); const p='dist/rom/dave.bf'; fs.writeFileSync(p, fs.readFileSync(p,'utf8').replace(/[^><+\\-.,[\\]]/g,''));\" && npx esbuild dist/runtime.js dist/vm.js dist/game/generated/level.js --minify --format=esm --outbase=dist --outdir=dist --allow-overwrite",
+    
+    "run:native": "npm run asm && cargo run --release --manifest-path runners/native/Cargo.toml -- rom/dave.bf",
+    "play:native": "npm run asm && cargo run --release --manifest-path runners/native/Cargo.toml -- rom/dave.bf --window",
+    "play:terminal": "npm run asm && cargo run --release --manifest-path runners/native/Cargo.toml -- rom/dave.bf --terminal",
+    
+    "dev": "npm run asm && node runners/web/vm.js --serve",
+    "size": "npm run asm && npm run compile -- --size",
+    "size:web:min": "npm run build:web:min && node -e \"const fs=require('fs'),z=require('zlib'),p=require('path');function files(d){return fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>{const f=p.join(d,e.name);return e.isDirectory()?files(f):[f]})}let tr=0,tg=0;for(const f of files('dist')){const b=fs.readFileSync(f);const g=z.gzipSync(b,{level:9});tr+=b.length;tg+=g.length;console.log(f.replace(/\\\\/g,'/')+': '+b.length+' raw bytes, '+g.length+' gzip bytes')}console.log('total: '+tr+' raw bytes, '+tg+' gzip bytes')\"",
+    "check": "cargo check --manifest-path compiler/Cargo.toml && cargo check --manifest-path runners/native/Cargo.toml",
+    
+    "test": "npm run asm && npm run test:compiler && npm run test:native && npm run test:js",
+    "test:compiler": "cargo test --manifest-path compiler/Cargo.toml",
+    "test:native": "cargo test --manifest-path runners/native/Cargo.toml",
+    "test:js": "node --test",
+    
+    "deploy": "npm run build:web:min && wrangler pages deploy dist/ --project-name davefuck --branch main --commit-dirty=true"
   }
 }
