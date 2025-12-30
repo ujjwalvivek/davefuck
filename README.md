@@ -12,6 +12,10 @@ Anything happening in game is because `rom/dave.bf` changes cells on a Brainfuck
 
 This release is the runnable Brainfuck ROM and web host.
 
+## Compiler & Native Runner
+
+The compiler and the native runner have now been open-sourced. You can find them in the [davefuck-compiler](compiler) and [davefuck-native](runners/native) repositories.
+
 ## Controls
 
 | Key                      | Action                  |
